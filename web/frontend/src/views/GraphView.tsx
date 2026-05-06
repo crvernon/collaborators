@@ -42,6 +42,7 @@ type GraphStyleConfig = {
   edgeWidths: Record<RelationshipType, number>;
   nodeLabelFontFamily: string;
   nodeLabelFontSize: number;
+  graphBackground: string;
 };
 
 function readSavedGraphStyles(): GraphStyleConfig | null {
@@ -50,14 +51,7 @@ function readSavedGraphStyles(): GraphStyleConfig | null {
     const raw = window.localStorage.getItem(GRAPH_STYLE_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<GraphStyleConfig>;
-    if (
-      !parsed.nodeColors ||
-      !parsed.nodeSizes ||
-      !parsed.edgeColors ||
-      !parsed.edgeWidths ||
-      typeof parsed.nodeLabelFontFamily !== "string" ||
-      typeof parsed.nodeLabelFontSize !== "number"
-    ) {
+    if (!parsed.nodeColors || !parsed.nodeSizes || !parsed.edgeColors || !parsed.edgeWidths) {
       return null;
     }
     return {
@@ -65,8 +59,16 @@ function readSavedGraphStyles(): GraphStyleConfig | null {
       nodeSizes: { ...NODE_SIZES, ...parsed.nodeSizes },
       edgeColors: { ...DEFAULT_EDGE_COLORS, ...parsed.edgeColors },
       edgeWidths: { ...DEFAULT_EDGE_WIDTHS, ...parsed.edgeWidths },
-      nodeLabelFontFamily: parsed.nodeLabelFontFamily,
-      nodeLabelFontSize: parsed.nodeLabelFontSize,
+      nodeLabelFontFamily:
+        typeof parsed.nodeLabelFontFamily === "string"
+          ? parsed.nodeLabelFontFamily
+          : "Arial",
+      nodeLabelFontSize:
+        typeof parsed.nodeLabelFontSize === "number"
+          ? parsed.nodeLabelFontSize
+          : 11,
+      graphBackground:
+        typeof parsed.graphBackground === "string" ? parsed.graphBackground : "#0b1220",
     };
   } catch {
     return null;
@@ -113,6 +115,9 @@ export function GraphView({ onToast }: Props) {
   );
   const [nodeLabelFontSize, setNodeLabelFontSize] = useState<number>(
     () => readSavedGraphStyles()?.nodeLabelFontSize ?? 11,
+  );
+  const [graphBackground, setGraphBackground] = useState<string>(
+    () => readSavedGraphStyles()?.graphBackground ?? "#0b1220",
   );
 
   const styleSheet = useMemo<cytoscape.StylesheetJson>(
@@ -326,7 +331,7 @@ export function GraphView({ onToast }: Props) {
 
   const onExport = () => {
     if (!cyRef.current) return;
-    const png = cyRef.current.png({ full: true, bg: "#0f172a", scale: 2 });
+    const png = cyRef.current.png({ full: true, bg: graphBackground, scale: 2 });
     const a = document.createElement("a");
     a.href = png;
     a.download = "collabgraph.png";
@@ -343,6 +348,7 @@ export function GraphView({ onToast }: Props) {
     setEdgeWidths(DEFAULT_EDGE_WIDTHS);
     setNodeLabelFontFamily("Arial");
     setNodeLabelFontSize(11);
+    setGraphBackground("#0b1220");
   };
 
   const saveStyles = () => {
@@ -354,6 +360,7 @@ export function GraphView({ onToast }: Props) {
         edgeWidths,
         nodeLabelFontFamily,
         nodeLabelFontSize,
+        graphBackground,
       };
       window.localStorage.setItem(GRAPH_STYLE_STORAGE_KEY, JSON.stringify(payload));
       onToast("success", "Graph styles saved.");
@@ -374,6 +381,7 @@ export function GraphView({ onToast }: Props) {
     setEdgeWidths(saved.edgeWidths);
     setNodeLabelFontFamily(saved.nodeLabelFontFamily);
     setNodeLabelFontSize(saved.nodeLabelFontSize);
+    setGraphBackground(saved.graphBackground);
     onToast("success", "Saved graph styles loaded.");
   };
 
@@ -458,6 +466,23 @@ export function GraphView({ onToast }: Props) {
           >
             {dynamicPhysics ? "Dynamic: on" : "Dynamic: off"}
           </button>
+        </div>
+        <div className="field">
+          <label>Background</label>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              onClick={() => setGraphBackground("#0b1220")}
+              style={{ fontSize: 12, padding: "5px 10px" }}
+            >
+              Dark
+            </button>
+            <button
+              onClick={() => setGraphBackground("#ffffff")}
+              style={{ fontSize: 12, padding: "5px 10px" }}
+            >
+              White
+            </button>
+          </div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button onClick={saveStyles}>Save styles</button>
@@ -580,7 +605,11 @@ export function GraphView({ onToast }: Props) {
         </div>
       </div>
 
-      <div ref={cyHostRef} className="cy-host" />
+      <div
+        ref={cyHostRef}
+        className="cy-host"
+        style={{ background: graphBackground }}
+      />
     </div>
   );
 }
