@@ -85,6 +85,7 @@ export function GraphView({ onToast }: Props) {
   const [layout, setLayout] = useState("cose-bilkent");
   const [showLabels, setShowLabels] = useState(true);
   const [showEdgeLabels, setShowEdgeLabels] = useState(false);
+  const [dynamicPhysics, setDynamicPhysics] = useState(false);
   const [enabledKinds, setEnabledKinds] = useState<Record<NodeKind, boolean>>({
     Collaborator: true,
     Sector: true,
@@ -285,12 +286,43 @@ export function GraphView({ onToast }: Props) {
       minZoom: 0.2,
       maxZoom: 3,
     });
+
+    const rerunDynamicLayout = (anchorNode: cytoscape.NodeSingular) => {
+      if (!dynamicPhysics) return;
+      const nodeId = anchorNode.id();
+      const pos = anchorNode.position();
+      // Keep the dragged node anchored while recomputing nearby force layout.
+      anchorNode.lock();
+      const run = cy.layout({
+        name: "cose-bilkent",
+        animate: "end",
+        randomize: false,
+        fit: false,
+        nodeDimensionsIncludeLabels: true,
+      } as cytoscape.LayoutOptions);
+      run.run();
+      run.one("layoutstop", () => {
+        const n = cy.getElementById(nodeId);
+        if (n.nonempty()) {
+          n.position(pos);
+          n.unlock();
+        }
+      });
+    };
+
+    const onDragFree = (evt: cytoscape.EventObject) => {
+      const node = evt.target as cytoscape.NodeSingular;
+      rerunDynamicLayout(node);
+    };
+    cy.on("dragfree", "node", onDragFree);
+
     cyRef.current = cy;
     return () => {
+      cy.removeListener("dragfree", "node", onDragFree);
       cy.destroy();
       cyRef.current = null;
     };
-  }, [filtered, styleSheet, layout]);
+  }, [filtered, styleSheet, layout, dynamicPhysics]);
 
   const onExport = () => {
     if (!cyRef.current) return;
@@ -417,6 +449,15 @@ export function GraphView({ onToast }: Props) {
               {showEdgeLabels ? "Edges: on" : "Edges: off"}
             </button>
           </div>
+        </div>
+        <div className="field">
+          <label>Dynamic force</label>
+          <button
+            onClick={() => setDynamicPhysics((v) => !v)}
+            style={{ fontSize: 12, padding: "5px 10px" }}
+          >
+            {dynamicPhysics ? "Dynamic: on" : "Dynamic: off"}
+          </button>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button onClick={saveStyles}>Save styles</button>
