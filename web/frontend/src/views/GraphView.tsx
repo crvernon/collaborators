@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import cytoscape from "cytoscape";
 import coseBilkent from "cytoscape-cose-bilkent";
+import cytoscapeSvg from "cytoscape-svg";
+import { jsPDF } from "jspdf";
 import {
   fetchGraph,
   fetchValues,
@@ -11,6 +13,7 @@ import {
 import { NODE_COLORS, NODE_SIZES } from "../lib/palette";
 
 cytoscape.use(coseBilkent);
+cytoscape.use(cytoscapeSvg);
 
 const LAYOUTS = [
   { id: "cose-bilkent", label: "Force (cose-bilkent)" },
@@ -34,6 +37,7 @@ const DEFAULT_EDGE_WIDTHS: Record<RelationshipType, number> = {
   PRESENT_AT: 1.8,
 };
 const GRAPH_STYLE_STORAGE_KEY = "collabgraph.graph.styles.v1";
+type ExportFormat = "png" | "jpeg" | "svg" | "pdf";
 
 type GraphStyleConfig = {
   nodeColors: Record<NodeKind, string>;
@@ -119,6 +123,9 @@ export function GraphView({ onToast }: Props) {
   const [graphBackground, setGraphBackground] = useState<string>(
     () => readSavedGraphStyles()?.graphBackground ?? "#0b1220",
   );
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("png");
+  const [exportDpi, setExportDpi] = useState<number>(300);
+  const [exportNoBackground, setExportNoBackground] = useState(false);
 
   const styleSheet = useMemo<cytoscape.StylesheetJson>(
     () => [
@@ -331,10 +338,60 @@ export function GraphView({ onToast }: Props) {
 
   const onExport = () => {
     if (!cyRef.current) return;
-    const png = cyRef.current.png({ full: true, bg: graphBackground, scale: 2 });
+    const cy = cyRef.current;
+    const scale = Math.max(1, exportDpi / 96);
+    const bg = exportNoBackground ? undefined : graphBackground;
+
+    if (exportFormat === "svg") {
+      const svgApi = cy as cytoscape.Core & {
+        svg: (options?: Record<string, unknown>) => string;
+      };
+      const svg = svgApi.svg({
+        full: true,
+        scale,
+        bg,
+      });
+      const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "collabgraph.svg";
+      a.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
+
+    if (exportFormat === "pdf") {
+      const png = cy.png({
+        full: true,
+        bg,
+        scale,
+      });
+      const widthPx = cy.width() * scale;
+      const heightPx = cy.height() * scale;
+      const widthPt = (widthPx / exportDpi) * 72;
+      const heightPt = (heightPx / exportDpi) * 72;
+      const pdf = new jsPDF({
+        orientation: widthPt >= heightPt ? "landscape" : "portrait",
+        unit: "pt",
+        format: [widthPt, heightPt],
+      });
+      pdf.addImage(png, "PNG", 0, 0, widthPt, heightPt, undefined, "FAST");
+      pdf.save("collabgraph.pdf");
+      return;
+    }
+
+    if (exportFormat === "jpeg" && exportNoBackground) {
+      onToast("info", "JPEG does not support transparency; using current background.");
+    }
+    const rasterBg =
+      exportFormat === "jpeg" && exportNoBackground ? graphBackground : bg;
+    const png = exportFormat === "jpeg"
+      ? cy.jpg({ full: true, bg: rasterBg, scale })
+      : cy.png({ full: true, bg: rasterBg, scale });
     const a = document.createElement("a");
     a.href = png;
-    a.download = "collabgraph.png";
+    a.download = `collabgraph.${exportFormat}`;
     a.click();
   };
 
@@ -485,6 +542,35 @@ export function GraphView({ onToast }: Props) {
           </div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <select
+            value={exportFormat}
+            onChange={(e) => setExportFormat(e.target.value as ExportFormat)}
+            aria-label="Export file type"
+            style={{ minWidth: 96 }}
+          >
+            <option value="png">PNG</option>
+            <option value="jpeg">JPEG</option>
+            <option value="svg">SVG</option>
+            <option value="pdf">PDF</option>
+          </select>
+          <input
+            type="number"
+            min={72}
+            max={1200}
+            step={10}
+            value={exportDpi}
+            onChange={(e) => setExportDpi(Number(e.target.value) || 300)}
+            aria-label="Export DPI"
+            title="Export DPI"
+            style={{ width: 88, minWidth: 88 }}
+          />
+          <button
+            onClick={() => setExportNoBackground((v) => !v)}
+            style={{ fontSize: 12, padding: "5px 10px" }}
+            title="Transparent/no background export"
+          >
+            {exportNoBackground ? "No bg: on" : "No bg: off"}
+          </button>
           <button onClick={saveStyles}>Save styles</button>
           <button onClick={loadStyles}>Load styles</button>
           <button onClick={resetStyles}>Reset styles</button>
@@ -492,7 +578,7 @@ export function GraphView({ onToast }: Props) {
             Refresh
           </button>
           <button className="primary" onClick={onExport}>
-            Export PNG
+            Export
           </button>
         </div>
       </div>
