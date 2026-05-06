@@ -4,6 +4,7 @@ import coseBilkent from "cytoscape-cose-bilkent";
 import {
   fetchGraph,
   fetchValues,
+  type GraphEdge,
   type GraphPayload,
   type NodeKind,
 } from "../lib/api";
@@ -18,6 +19,59 @@ const LAYOUTS = [
   { id: "grid", label: "Grid" },
   { id: "breadthfirst", label: "Breadth-first" },
 ];
+
+const RELATIONSHIP_TYPES = ["AFFILIATED_WITH", "WORKS_IN", "PRESENT_AT"] as const;
+type RelationshipType = GraphEdge["rel"];
+
+const DEFAULT_EDGE_COLORS: Record<RelationshipType, string> = {
+  AFFILIATED_WITH: "#7c3aed",
+  WORKS_IN: "#0ea5e9",
+  PRESENT_AT: "#f59e0b",
+};
+const DEFAULT_EDGE_WIDTHS: Record<RelationshipType, number> = {
+  AFFILIATED_WITH: 1.8,
+  WORKS_IN: 1.8,
+  PRESENT_AT: 1.8,
+};
+const GRAPH_STYLE_STORAGE_KEY = "collabgraph.graph.styles.v1";
+
+type GraphStyleConfig = {
+  nodeColors: Record<NodeKind, string>;
+  nodeSizes: Record<NodeKind, number>;
+  edgeColors: Record<RelationshipType, string>;
+  edgeWidths: Record<RelationshipType, number>;
+  nodeLabelFontFamily: string;
+  nodeLabelFontSize: number;
+};
+
+function readSavedGraphStyles(): GraphStyleConfig | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(GRAPH_STYLE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<GraphStyleConfig>;
+    if (
+      !parsed.nodeColors ||
+      !parsed.nodeSizes ||
+      !parsed.edgeColors ||
+      !parsed.edgeWidths ||
+      typeof parsed.nodeLabelFontFamily !== "string" ||
+      typeof parsed.nodeLabelFontSize !== "number"
+    ) {
+      return null;
+    }
+    return {
+      nodeColors: { ...NODE_COLORS, ...parsed.nodeColors },
+      nodeSizes: { ...NODE_SIZES, ...parsed.nodeSizes },
+      edgeColors: { ...DEFAULT_EDGE_COLORS, ...parsed.edgeColors },
+      edgeWidths: { ...DEFAULT_EDGE_WIDTHS, ...parsed.edgeWidths },
+      nodeLabelFontFamily: parsed.nodeLabelFontFamily,
+      nodeLabelFontSize: parsed.nodeLabelFontSize,
+    };
+  } catch {
+    return null;
+  }
+}
 
 interface Props {
   onToast: (kind: "success" | "error" | "info", text: string) => void;
@@ -41,29 +95,50 @@ export function GraphView({ onToast }: Props) {
   const [filterSector, setFilterSector] = useState("");
   const [filterAffiliation, setFilterAffiliation] = useState("");
   const [loading, setLoading] = useState(false);
+  const [nodeColors, setNodeColors] = useState<Record<NodeKind, string>>(
+    () => readSavedGraphStyles()?.nodeColors ?? NODE_COLORS,
+  );
+  const [nodeSizes, setNodeSizes] = useState<Record<NodeKind, number>>(
+    () => readSavedGraphStyles()?.nodeSizes ?? NODE_SIZES,
+  );
+  const [edgeColors, setEdgeColors] = useState<Record<RelationshipType, string>>(
+    () => readSavedGraphStyles()?.edgeColors ?? DEFAULT_EDGE_COLORS,
+  );
+  const [edgeWidths, setEdgeWidths] = useState<Record<RelationshipType, number>>(
+    () => readSavedGraphStyles()?.edgeWidths ?? DEFAULT_EDGE_WIDTHS,
+  );
+  const [nodeLabelFontFamily, setNodeLabelFontFamily] = useState<string>(
+    () => readSavedGraphStyles()?.nodeLabelFontFamily ?? "Arial",
+  );
+  const [nodeLabelFontSize, setNodeLabelFontSize] = useState<number>(
+    () => readSavedGraphStyles()?.nodeLabelFontSize ?? 11,
+  );
 
   const styleSheet = useMemo<cytoscape.StylesheetJson>(
     () => [
       {
         selector: "node",
         style: {
-          "background-color": (ele: cytoscape.NodeSingular) =>
-            NODE_COLORS[ele.data("kind") as NodeKind] ?? "#888",
-          width: (ele: cytoscape.NodeSingular) =>
-            NODE_SIZES[ele.data("kind") as NodeKind] ?? 30,
-          height: (ele: cytoscape.NodeSingular) =>
-            NODE_SIZES[ele.data("kind") as NodeKind] ?? 30,
           label: showLabels ? "data(name)" : "",
           color: "#e5e7eb",
-          "font-size": 11,
           "text-outline-color": "#0f172a",
           "text-outline-width": 2,
           "text-valign": "center",
           "text-halign": "center",
           "border-color": "#0f172a",
           "border-width": 1,
+          "font-family": nodeLabelFontFamily,
+          "font-size": nodeLabelFontSize,
         } as cytoscape.Css.Node,
       },
+      ...(Object.keys(nodeColors) as NodeKind[]).map((kind) => ({
+        selector: `node[kind = "${kind}"]`,
+        style: {
+          "background-color": nodeColors[kind],
+          width: nodeSizes[kind],
+          height: nodeSizes[kind],
+        } as cytoscape.Css.Node,
+      })),
       {
         selector: "edge",
         style: {
@@ -81,12 +156,29 @@ export function GraphView({ onToast }: Props) {
           "text-background-padding": "2px",
         } as cytoscape.Css.Edge,
       },
+      ...RELATIONSHIP_TYPES.map((rel) => ({
+        selector: `edge[rel = "${rel}"]`,
+        style: {
+          width: edgeWidths[rel],
+          "line-color": edgeColors[rel],
+          "target-arrow-color": edgeColors[rel],
+        } as cytoscape.Css.Edge,
+      })),
       {
         selector: "node:selected",
         style: { "border-color": "#fde68a", "border-width": 3 } as cytoscape.Css.Node,
       },
     ],
-    [showLabels, showEdgeLabels],
+    [
+      showLabels,
+      showEdgeLabels,
+      nodeColors,
+      nodeSizes,
+      edgeColors,
+      edgeWidths,
+      nodeLabelFontFamily,
+      nodeLabelFontSize,
+    ],
   );
 
   const reload = async () => {
@@ -212,6 +304,47 @@ export function GraphView({ onToast }: Props) {
   const toggleKind = (k: NodeKind) =>
     setEnabledKinds((prev) => ({ ...prev, [k]: !prev[k] }));
 
+  const resetStyles = () => {
+    setNodeColors(NODE_COLORS);
+    setNodeSizes(NODE_SIZES);
+    setEdgeColors(DEFAULT_EDGE_COLORS);
+    setEdgeWidths(DEFAULT_EDGE_WIDTHS);
+    setNodeLabelFontFamily("Arial");
+    setNodeLabelFontSize(11);
+  };
+
+  const saveStyles = () => {
+    try {
+      const payload: GraphStyleConfig = {
+        nodeColors,
+        nodeSizes,
+        edgeColors,
+        edgeWidths,
+        nodeLabelFontFamily,
+        nodeLabelFontSize,
+      };
+      window.localStorage.setItem(GRAPH_STYLE_STORAGE_KEY, JSON.stringify(payload));
+      onToast("success", "Graph styles saved.");
+    } catch {
+      onToast("error", "Failed to save graph styles.");
+    }
+  };
+
+  const loadStyles = () => {
+    const saved = readSavedGraphStyles();
+    if (!saved) {
+      onToast("info", "No saved graph styles found.");
+      return;
+    }
+    setNodeColors(saved.nodeColors);
+    setNodeSizes(saved.nodeSizes);
+    setEdgeColors(saved.edgeColors);
+    setEdgeWidths(saved.edgeWidths);
+    setNodeLabelFontFamily(saved.nodeLabelFontFamily);
+    setNodeLabelFontSize(saved.nodeLabelFontSize);
+    onToast("success", "Saved graph styles loaded.");
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
       <div className="toolbar">
@@ -286,6 +419,9 @@ export function GraphView({ onToast }: Props) {
           </div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <button onClick={saveStyles}>Save styles</button>
+          <button onClick={loadStyles}>Load styles</button>
+          <button onClick={resetStyles}>Reset styles</button>
           <button onClick={reload} disabled={loading}>
             Refresh
           </button>
@@ -297,9 +433,9 @@ export function GraphView({ onToast }: Props) {
 
       <div className="toolbar" style={{ paddingTop: 6, paddingBottom: 6 }}>
         <div className="legend">
-          {(Object.keys(NODE_COLORS) as NodeKind[]).map((k) => (
+          {(Object.keys(nodeColors) as NodeKind[]).map((k) => (
             <span key={k}>
-              <span className="swatch" style={{ background: NODE_COLORS[k] }} />
+              <span className="swatch" style={{ background: nodeColors[k] }} />
               {k}
             </span>
           ))}
@@ -309,6 +445,98 @@ export function GraphView({ onToast }: Props) {
             ? `${filtered.nodes.length} nodes · ${filtered.edges.length} edges`
             : "—"}
         </span>
+      </div>
+
+      <div className="toolbar" style={{ paddingTop: 6, paddingBottom: 10 }}>
+        {(Object.keys(nodeColors) as NodeKind[]).map((k) => (
+          <div key={`node-style-${k}`} className="field">
+            <label>{k} node</label>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input
+                type="color"
+                value={nodeColors[k]}
+                onChange={(e) =>
+                  setNodeColors((prev) => ({ ...prev, [k]: e.target.value }))
+                }
+                aria-label={`${k} node color`}
+              />
+              <input
+                type="number"
+                min={12}
+                max={120}
+                step={2}
+                value={nodeSizes[k]}
+                onChange={(e) =>
+                  setNodeSizes((prev) => ({
+                    ...prev,
+                    [k]: Number(e.target.value) || prev[k],
+                  }))
+                }
+                style={{ width: 84, minWidth: 84 }}
+                aria-label={`${k} node size`}
+              />
+            </div>
+          </div>
+        ))}
+        {RELATIONSHIP_TYPES.map((rel) => (
+          <div key={`edge-style-${rel}`} className="field">
+            <label>{rel} edge</label>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input
+                type="color"
+                value={edgeColors[rel]}
+                onChange={(e) =>
+                  setEdgeColors((prev) => ({ ...prev, [rel]: e.target.value }))
+                }
+                aria-label={`${rel} edge color`}
+              />
+              <input
+                type="number"
+                min={0.5}
+                max={8}
+                step={0.1}
+                value={edgeWidths[rel]}
+                onChange={(e) =>
+                  setEdgeWidths((prev) => ({
+                    ...prev,
+                    [rel]: Number(e.target.value) || prev[rel],
+                  }))
+                }
+                style={{ width: 84, minWidth: 84 }}
+                aria-label={`${rel} edge width`}
+              />
+            </div>
+          </div>
+        ))}
+        <div className="field">
+          <label>Node label font</label>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <select
+              value={nodeLabelFontFamily}
+              onChange={(e) => setNodeLabelFontFamily(e.target.value)}
+              style={{ minWidth: 160 }}
+            >
+              <option value="Arial">Arial</option>
+              <option value="Helvetica">Helvetica</option>
+              <option value="Verdana">Verdana</option>
+              <option value="Tahoma">Tahoma</option>
+              <option value="Trebuchet MS">Trebuchet MS</option>
+              <option value="Georgia">Georgia</option>
+              <option value="Times New Roman">Times New Roman</option>
+              <option value="Courier New">Courier New</option>
+            </select>
+            <input
+              type="number"
+              min={8}
+              max={32}
+              step={1}
+              value={nodeLabelFontSize}
+              onChange={(e) => setNodeLabelFontSize(Number(e.target.value) || 11)}
+              style={{ width: 84, minWidth: 84 }}
+              aria-label="Node label font size"
+            />
+          </div>
+        </div>
       </div>
 
       <div ref={cyHostRef} className="cy-host" />

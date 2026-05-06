@@ -16,12 +16,9 @@ REQUIRED_COLUMNS: tuple[str, ...] = (
     "collaborator",
     "sector",
     "affiliation",
-    "address",
-    "latitude",
-    "longitude",
 )
 
-OPTIONAL_COLUMNS: tuple[str, ...] = ("crs",)
+OPTIONAL_COLUMNS: tuple[str, ...] = ("address", "latitude", "longitude", "crs")
 
 _STRING_COLUMNS: tuple[str, ...] = (
     "collaborator",
@@ -49,7 +46,7 @@ def read_collaborators(
     -------
     pandas.DataFrame
         DataFrame with stripped string columns, numeric ``latitude`` /
-        ``longitude``, and rows missing any required value dropped.
+        ``longitude`` (when present), and rows missing required values dropped.
 
     Raises
     ------
@@ -74,12 +71,13 @@ def read_collaborators(
         if col in df.columns:
             df[col] = df[col].astype("string").str.strip()
 
+    for col in OPTIONAL_COLUMNS:
+        if col not in df.columns:
+            df[col] = pd.NA
+
     df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
     df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
 
     df = df.dropna(subset=list(REQUIRED_COLUMNS)).reset_index(drop=True)
-
-    if "crs" not in df.columns:
-        df["crs"] = pd.NA
 
     return df
