@@ -10,7 +10,9 @@ import {
   type GraphPayload,
   type NodeKind,
 } from "../lib/api";
+import { legendToneFromBackground } from "../lib/legendContrast";
 import { NODE_COLORS, NODE_SIZES } from "../lib/palette";
+import { LegendShapeGlyph } from "../components/LegendShapeGlyph";
 
 cytoscape.use(coseBilkent);
 cytoscape.use(cytoscapeSvg);
@@ -91,6 +93,8 @@ function escapeSelectorValue(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
+const DEFAULT_LEGEND_BACKGROUND = "#0f172a";
+
 type GraphStyleConfig = {
   nodeColors: Record<NodeKind, string>;
   nodeSizes: Record<NodeKind, number>;
@@ -99,6 +103,7 @@ type GraphStyleConfig = {
   nodeLabelFontFamily: string;
   nodeLabelFontSize: number;
   graphBackground: string;
+  legendBackground: string;
   sectorPalette: SectorPalette;
   colorAffiliationsBySector: boolean;
   shapeSectorsBySector: boolean;
@@ -129,6 +134,10 @@ function readSavedGraphStyles(): GraphStyleConfig | null {
           : 11,
       graphBackground:
         typeof parsed.graphBackground === "string" ? parsed.graphBackground : "#0b1220",
+      legendBackground:
+        typeof parsed.legendBackground === "string"
+          ? parsed.legendBackground
+          : DEFAULT_LEGEND_BACKGROUND,
       sectorPalette:
         parsed.sectorPalette && typeof parsed.sectorPalette === "object"
           ? (parsed.sectorPalette as SectorPalette)
@@ -195,6 +204,9 @@ export function GraphView({ onToast }: Props) {
   );
   const [graphBackground, setGraphBackground] = useState<string>(
     () => readSavedGraphStyles()?.graphBackground ?? "#0b1220",
+  );
+  const [legendBackground, setLegendBackground] = useState<string>(
+    () => readSavedGraphStyles()?.legendBackground ?? DEFAULT_LEGEND_BACKGROUND,
   );
   const [exportFormat, setExportFormat] = useState<ExportFormat>("png");
   const [exportDpi, setExportDpi] = useState<number>(300);
@@ -438,6 +450,11 @@ export function GraphView({ onToast }: Props) {
     );
     return { nodes: filteredNodes, edges: filteredEdges };
   }, [data, filterSector, filterAffiliation, enabledKinds]);
+
+  const legendTone = useMemo(
+    () => legendToneFromBackground(legendBackground),
+    [legendBackground],
+  );
 
   const legendEntries = useMemo(() => {
     if (!filtered) return [] as Array<{ label: string; color: string; shape: string }>;
@@ -708,6 +725,7 @@ export function GraphView({ onToast }: Props) {
     setNodeLabelFontFamily("Arial");
     setNodeLabelFontSize(11);
     setGraphBackground("#0b1220");
+    setLegendBackground(DEFAULT_LEGEND_BACKGROUND);
     setSectorPalette({});
     setColorAffiliationsBySector(false);
     setShapeSectorsBySector(false);
@@ -753,6 +771,7 @@ export function GraphView({ onToast }: Props) {
         nodeLabelFontFamily,
         nodeLabelFontSize,
         graphBackground,
+        legendBackground,
         sectorPalette,
         colorAffiliationsBySector,
         shapeSectorsBySector,
@@ -778,6 +797,7 @@ export function GraphView({ onToast }: Props) {
     setNodeLabelFontFamily(saved.nodeLabelFontFamily);
     setNodeLabelFontSize(saved.nodeLabelFontSize);
     setGraphBackground(saved.graphBackground);
+    setLegendBackground(saved.legendBackground ?? DEFAULT_LEGEND_BACKGROUND);
     setSectorPalette(saved.sectorPalette ?? {});
     setColorAffiliationsBySector(saved.colorAffiliationsBySector);
     setShapeSectorsBySector(saved.shapeSectorsBySector);
@@ -905,20 +925,28 @@ export function GraphView({ onToast }: Props) {
         >
           <div ref={cyHostRef} className="cy-host" style={{ background: graphBackground }} />
           {showNodeLegend && legendEntries.length > 0 && (
-            <div className="graph-overlay-legend" aria-label="Node legend">
-              <h4>Visible node legend</h4>
+            <div
+              className="graph-overlay-legend"
+              aria-label="Node legend"
+              style={{
+                background: legendBackground,
+                color: legendTone.text,
+                borderColor: legendTone.border,
+              }}
+            >
+              <h4 style={{ color: legendTone.muted }}>Visible node legend</h4>
               {legendEntries.map((entry) => (
                 <div
                   key={`${entry.label}-${entry.shape}`}
                   className="graph-overlay-legend-row"
+                  title={`${entry.label} · shape: ${entry.shape}`}
                 >
-                  <span
-                    className="graph-overlay-legend-swatch"
-                    style={{ background: entry.color }}
-                    title={`shape: ${entry.shape}`}
+                  <LegendShapeGlyph
+                    shape={entry.shape}
+                    color={entry.color}
+                    outlineStroke={legendTone.glyphStroke}
                   />
                   <span className="graph-overlay-legend-text">{entry.label}</span>
-                  <span className="graph-overlay-legend-shape">{entry.shape}</span>
                 </div>
               ))}
             </div>
@@ -1018,6 +1046,31 @@ export function GraphView({ onToast }: Props) {
                   >
                     {showNodeLegend ? "On" : "Off"}
                   </button>
+                </div>
+                <div className="field">
+                  <label>Legend background</label>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                    <input
+                      type="color"
+                      value={legendBackground}
+                      onChange={(e) => setLegendBackground(e.target.value)}
+                      aria-label="Legend panel background color"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setLegendBackground(DEFAULT_LEGEND_BACKGROUND)}
+                      style={{ fontSize: 12, padding: "5px 10px" }}
+                    >
+                      Default
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLegendBackground(graphBackground)}
+                      style={{ fontSize: 12, padding: "5px 10px" }}
+                    >
+                      Match graph
+                    </button>
+                  </div>
                 </div>
               </section>
 
