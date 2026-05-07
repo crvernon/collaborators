@@ -4,7 +4,6 @@ import { Toast, type ToastMessage } from "./components/Toast";
 import { SetupView } from "./views/SetupView";
 import { GraphView } from "./views/GraphView";
 import { MapView } from "./views/MapView";
-import { CypherView } from "./views/CypherView";
 import {
   fetchHealth,
   fetchStats,
@@ -39,9 +38,7 @@ export function App() {
     } catch {
       setHealth({
         connected: false,
-        uri: "",
-        user: "",
-        database: "",
+        db_path: "",
         error: "Failed to reach API",
       });
     }
@@ -68,7 +65,6 @@ export function App() {
         )}
         {view === "graph" && <GraphView onToast={showToast} />}
         {view === "map" && <MapView onToast={showToast} />}
-        {view === "cypher" && <CypherView onToast={showToast} />}
       </div>
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>

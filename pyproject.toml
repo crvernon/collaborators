@@ -1,7 +1,7 @@
 [project]
 name = "collabgraph"
 version = "0.1.0"
-description = "Build a collaborator network graph in Neo4j from an Excel input file."
+description = "Build a collaborator network graph from an Excel input file (embedded Kuzu storage)."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -9,7 +9,7 @@ authors = [{ name = "Chris Vernon" }]
 dependencies = [
   "pandas>=2.2",
   "openpyxl>=3.1",
-  "neo4j>=5.20",
+  "kuzu>=0.11",
   "python-dotenv>=1.0",
   "networkx>=3.3",
   "matplotlib>=3.8",

@@ -1,21 +1,15 @@
-"""HTTP routes for the collabgraph web UI."""
+"""HTTP routes for the collabgraph web UI (Kuzu-backed)."""
 
 from __future__ import annotations
 
-from pathlib import Path
+import json
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from neo4j.exceptions import ServiceUnavailable
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from collabgraph.cypher_examples import (
-    BLOOM_PERSPECTIVE_HINT,
-    get_example,
-    list_examples,
-)
-from collabgraph.ingest import Neo4jIngestor
-from collabgraph.loader import read_collaborators
+from collabgraph.ingest import Ingestor
+from collabgraph.loader import peek_excel_columns, peek_excel_sheet_names
 from collabgraph.web.services import (
     _bytes_to_dataframe,
     fetch_affiliations_geo,
@@ -24,22 +18,23 @@ from collabgraph.web.services import (
     get_settings,
     graph_stats,
     list_unique,
-    run_named_cypher,
 )
 
 router = APIRouter()
-
-DEFAULT_DATA_PATH = Path("data/collaborators.xlsx")
 
 
 class HealthResponse(BaseModel):
     """Connectivity report for the UI."""
 
     connected: bool
-    uri: str
-    user: str
-    database: str
+    db_path: str
     error: str | None = None
+
+
+class SettingsResponse(BaseModel):
+    """Read-only view of the active configuration for the UI."""
+
+    db_path: str
 
 
 class IngestResponse(BaseModel):
@@ -47,84 +42,117 @@ class IngestResponse(BaseModel):
     stats: dict[str, int]
 
 
-class CypherRunRequest(BaseModel):
-    name: str
-    params: dict[str, Any] = Field(default_factory=dict)
+class ExcelColumnsResponse(BaseModel):
+    columns: list[str]
 
 
-class CypherRunResponse(BaseModel):
-    name: str
-    cypher: str
-    rows: list[dict[str, Any]]
+class ExcelSheetsResponse(BaseModel):
+    sheets: list[str]
 
 
 @router.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     settings = get_settings()
     try:
-        with Neo4jIngestor(
-            settings.uri, settings.user, settings.password, settings.database
-        ) as ing:
+        with Ingestor(settings.db_path) as ing:
             ing.verify_connectivity()
-        return HealthResponse(
-            connected=True,
-            uri=settings.uri,
-            user=settings.user,
-            database=settings.database,
-        )
-    except (ServiceUnavailable, Exception) as exc:  # noqa: BLE001
+        return HealthResponse(connected=True, db_path=str(settings.db_path_absolute))
+    except Exception as exc:  # noqa: BLE001
         return HealthResponse(
             connected=False,
-            uri=settings.uri,
-            user=settings.user,
-            database=settings.database,
+            db_path=str(settings.db_path_absolute),
             error=str(exc),
         )
 
 
-@router.get("/settings")
-def settings_endpoint() -> dict[str, str]:
+@router.get("/settings", response_model=SettingsResponse)
+def settings_endpoint() -> SettingsResponse:
     s = get_settings()
-    return {"uri": s.uri, "user": s.user, "database": s.database}
+    return SettingsResponse(db_path=str(s.db_path_absolute))
 
 
 @router.post("/init-schema")
 def init_schema_endpoint() -> dict[str, str]:
     s = get_settings()
-    with Neo4jIngestor(s.uri, s.user, s.password, s.database) as ing:
+    with Ingestor(s.db_path) as ing:
         ing.init_schema()
     return {"status": "ok"}
+
+
+@router.post("/excel-sheets", response_model=ExcelSheetsResponse)
+async def excel_sheets_endpoint(file: UploadFile = File(...)) -> ExcelSheetsResponse:
+    """Return worksheet names for an uploaded .xlsx."""
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty upload.")
+    try:
+        sheets = peek_excel_sheet_names(content)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not read workbook: {exc}",
+        ) from exc
+    return ExcelSheetsResponse(sheets=sheets)
+
+
+@router.post("/excel-columns", response_model=ExcelColumnsResponse)
+async def excel_columns_endpoint(
+    file: UploadFile = File(...),
+    sheet: str = Form(default="collaborators"),
+) -> ExcelColumnsResponse:
+    """Return header row for an uploaded .xlsx (for column mapping UI)."""
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty upload.")
+    try:
+        cols = peek_excel_columns(content, sheet=sheet)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not read sheet '{sheet}': {exc}",
+        ) from exc
+    return ExcelColumnsResponse(columns=cols)
 
 
 @router.post("/ingest", response_model=IngestResponse)
 async def ingest_endpoint(
     file: UploadFile | None = File(default=None),
     sheet: str = Form(default="collaborators"),
-    use_default: bool = Form(default=False),
+    column_map_json: str | None = Form(default=None),
 ) -> IngestResponse:
-    if file is not None and file.filename:
-        content = await file.read()
+    column_map: dict[str, object] | None = None
+    if column_map_json:
         try:
-            df = _bytes_to_dataframe(content, sheet=sheet)
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(
-                status_code=400, detail=f"Failed to parse upload: {exc}"
-            ) from exc
-    elif use_default:
-        if not DEFAULT_DATA_PATH.exists():
+            parsed = json.loads(column_map_json)
+        except json.JSONDecodeError as exc:
             raise HTTPException(
                 status_code=400,
-                detail=f"Default data file not found at {DEFAULT_DATA_PATH}",
+                detail=f"column_map_json must be JSON: {exc}",
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="column_map_json must be a JSON object.",
             )
-        df = read_collaborators(DEFAULT_DATA_PATH, sheet=sheet)
-    else:
+        column_map = {str(k): v for k, v in parsed.items()}
+        if not column_map:
+            column_map = None
+
+    if file is None or not file.filename:
         raise HTTPException(
             status_code=400,
-            detail="Provide a file upload or set use_default=true.",
+            detail="Provide an .xlsx file upload.",
         )
+    content = await file.read()
+    try:
+        df = _bytes_to_dataframe(content, sheet=sheet, column_map=column_map)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=400, detail=f"Failed to parse upload: {exc}"
+        ) from exc
 
     s = get_settings()
-    with Neo4jIngestor(s.uri, s.user, s.password, s.database) as ing:
+    with Ingestor(s.db_path) as ing:
         ing.init_schema()
         n = ing.ingest(df)
 
@@ -134,7 +162,7 @@ async def ingest_endpoint(
 @router.post("/clear")
 def clear_endpoint() -> dict[str, str]:
     s = get_settings()
-    with Neo4jIngestor(s.uri, s.user, s.password, s.database) as ing:
+    with Ingestor(s.db_path) as ing:
         ing.clear()
     return {"status": "ok"}
 
@@ -165,25 +193,3 @@ def values_endpoint(column: str) -> list[str]:
         return list_unique(column)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.get("/cypher")
-def cypher_list_endpoint() -> dict[str, Any]:
-    return {
-        "names": list_examples(),
-        "snippets": {n: get_example(n) for n in list_examples()},
-        "bloom_hint": BLOOM_PERSPECTIVE_HINT,
-    }
-
-
-@router.post("/cypher/run", response_model=CypherRunResponse)
-def cypher_run_endpoint(req: CypherRunRequest) -> CypherRunResponse:
-    try:
-        cypher = get_example(req.name)
-    except KeyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    try:
-        rows = run_named_cypher(req.name, req.params)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return CypherRunResponse(name=req.name, cypher=cypher, rows=rows)

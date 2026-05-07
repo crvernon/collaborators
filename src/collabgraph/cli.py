@@ -8,18 +8,16 @@ from typing import Optional
 import typer
 
 from collabgraph.config import load_settings
-from collabgraph.cypher_examples import (
-    BLOOM_PERSPECTIVE_HINT,
-    get_example,
-    list_examples,
-)
-from collabgraph.ingest import Neo4jIngestor
+from collabgraph.ingest import Ingestor
 from collabgraph.loader import read_collaborators
 from collabgraph.viz import build_networkx_graph, draw_graph
 
 app = typer.Typer(
     add_completion=False,
-    help="Build and visualize a collaborator network graph in Neo4j.",
+    help=(
+        "Build and visualize a collaborator network graph "
+        "stored in an embedded Kuzu database."
+    ),
 )
 
 DEFAULT_DATA_PATH = Path("data/collaborators.xlsx")
@@ -30,17 +28,15 @@ def init_schema_cmd(
     env_file: Optional[Path] = typer.Option(
         None,
         "--env-file",
-        help="Optional path to a .env file with NEO4J_* settings.",
+        help="Optional path to a .env file (e.g. setting COLLABGRAPH_DB_PATH).",
     ),
 ) -> None:
-    """Create Neo4j uniqueness constraints and indexes."""
+    """Create node/relationship tables in the embedded Kuzu DB (idempotent)."""
     settings = load_settings(env_file)
-    with Neo4jIngestor(
-        settings.uri, settings.user, settings.password, settings.database
-    ) as ing:
+    with Ingestor(settings.db_path) as ing:
         ing.verify_connectivity()
         ing.init_schema()
-    typer.echo("Schema constraints/indexes ensured.")
+    typer.echo(f"Schema ensured at {settings.db_path_absolute}.")
 
 
 @app.command("ingest")
@@ -66,20 +62,18 @@ def ingest_cmd(
     env_file: Optional[Path] = typer.Option(
         None,
         "--env-file",
-        help="Optional path to a .env file with NEO4J_* settings.",
+        help="Optional path to a .env file (e.g. setting COLLABGRAPH_DB_PATH).",
     ),
 ) -> None:
-    """Read the Excel file and upsert nodes/relationships into Neo4j."""
+    """Read the Excel file and upsert nodes/relationships into Kuzu."""
     settings = load_settings(env_file)
     df = read_collaborators(path, sheet=sheet)
-    with Neo4jIngestor(
-        settings.uri, settings.user, settings.password, settings.database
-    ) as ing:
+    with Ingestor(settings.db_path) as ing:
         ing.verify_connectivity()
         if init_schema:
             ing.init_schema()
         n = ing.ingest(df)
-    typer.echo(f"Ingested {n} row(s) from {path}.")
+    typer.echo(f"Ingested {n} row(s) from {path} into {settings.db_path_absolute}.")
 
 
 @app.command("viz")
@@ -147,32 +141,6 @@ def viz_cmd(
         filter_affiliation=filter_affiliation,
     )
     typer.echo(f"Wrote {output}")
-
-
-@app.command("cypher")
-def cypher_cmd(
-    name: Optional[str] = typer.Option(
-        None,
-        "--name",
-        "-n",
-        help="Snippet name. Omit to list available examples.",
-    ),
-    bloom_hint: bool = typer.Option(
-        False,
-        "--bloom-hint",
-        help="Print a Bloom perspective hint for this schema.",
-    ),
-) -> None:
-    """Print a named Cypher example or list available snippets."""
-    if bloom_hint:
-        typer.echo(BLOOM_PERSPECTIVE_HINT)
-        return
-    if name is None:
-        typer.echo("Available Cypher examples:")
-        for key in list_examples():
-            typer.echo(f"  - {key}")
-        return
-    typer.echo(get_example(name))
 
 
 if __name__ == "__main__":

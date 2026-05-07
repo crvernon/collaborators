@@ -1,6 +1,6 @@
 import type { HealthStatus } from "../lib/api";
 
-export type ViewKey = "setup" | "graph" | "map" | "cypher";
+export type ViewKey = "setup" | "graph" | "map";
 
 interface Props {
   health: HealthStatus | null;
@@ -12,20 +12,26 @@ const TABS: { key: ViewKey; label: string }[] = [
   { key: "setup", label: "Setup" },
   { key: "graph", label: "Graph" },
   { key: "map", label: "Map" },
-  { key: "cypher", label: "Cypher" },
 ];
+
+function shortenPath(path: string): string {
+  if (!path) return "";
+  const parts = path.split(/[\\/]/);
+  if (parts.length <= 2) return path;
+  return `…/${parts.slice(-2).join("/")}`;
+}
 
 export function Header({ health, active, onChange }: Props) {
   const dotClass = health ? (health.connected ? "ok" : "bad") : "";
   const label = health
     ? health.connected
-      ? `${health.user}@${health.uri.replace(/^bolt:\/\//, "")}/${health.database}`
+      ? shortenPath(health.db_path)
       : "disconnected"
     : "checking…";
   return (
     <header className="app-header">
       <h1>collabgraph</h1>
-      <span className="tag">
+      <span className="tag" title={health?.db_path ?? ""}>
         <span className={`dot ${dotClass}`} />
         {label}
       </span>

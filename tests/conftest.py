@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pandas as pd
 import pytest
+
+from collabgraph.config import Settings
+from collabgraph.ingest import Ingestor
 
 
 @pytest.fixture()
@@ -50,3 +54,22 @@ def sample_xlsx(tmp_path: Path, sample_frame: pd.DataFrame) -> Path:
     out = tmp_path / "collaborators.xlsx"
     sample_frame.to_excel(out, sheet_name="collaborators", index=False)
     return out
+
+
+@pytest.fixture()
+def kuzu_db_path(tmp_path: Path) -> Path:
+    """Return a fresh on-disk path for an embedded Kuzu DB used by a test."""
+    return tmp_path / "test.kuzu"
+
+
+@pytest.fixture()
+def kuzu_settings(kuzu_db_path: Path) -> Settings:
+    """Return a Settings object pointing at the per-test Kuzu DB path."""
+    return Settings(db_path=str(kuzu_db_path))
+
+
+@pytest.fixture()
+def ingestor(kuzu_db_path: Path) -> Iterator[Ingestor]:
+    """Yield an open ``Ingestor`` against a temp Kuzu DB."""
+    with Ingestor(str(kuzu_db_path)) as ing:
+        yield ing

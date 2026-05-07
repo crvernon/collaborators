@@ -1,10 +1,10 @@
-"""Cypher schema (constraints and indexes) for the collaborator graph.
+"""DDL for the embedded Kuzu collaborator graph.
 
-The graph uses three node labels and three relationship types:
+The graph uses three node tables and three relationship tables:
 
-- ``(:Collaborator {name})``
-- ``(:Sector {name})``
-- ``(:Affiliation {name, address, latitude, longitude, crs})``
+- ``Collaborator(name)``
+- ``Sector(name)``
+- ``Affiliation(name, address, latitude, longitude, crs)``
 - ``(:Collaborator)-[:AFFILIATED_WITH]->(:Affiliation)``
 - ``(:Collaborator)-[:WORKS_IN]->(:Sector)``
 - ``(:Sector)-[:PRESENT_AT]->(:Affiliation)``
@@ -12,21 +12,46 @@ The graph uses three node labels and three relationship types:
 
 from __future__ import annotations
 
-CONSTRAINT_STATEMENTS: tuple[str, ...] = (
-    "CREATE CONSTRAINT collaborator_name IF NOT EXISTS "
-    "FOR (n:Collaborator) REQUIRE n.name IS UNIQUE",
-    "CREATE CONSTRAINT affiliation_name IF NOT EXISTS "
-    "FOR (n:Affiliation) REQUIRE n.name IS UNIQUE",
-    "CREATE CONSTRAINT sector_name IF NOT EXISTS "
-    "FOR (n:Sector) REQUIRE n.name IS UNIQUE",
+NODE_TABLE_STATEMENTS: tuple[tuple[str, str], ...] = (
+    (
+        "Collaborator",
+        "CREATE NODE TABLE Collaborator(name STRING, PRIMARY KEY(name))",
+    ),
+    (
+        "Sector",
+        "CREATE NODE TABLE Sector(name STRING, PRIMARY KEY(name))",
+    ),
+    (
+        "Affiliation",
+        (
+            "CREATE NODE TABLE Affiliation("
+            "name STRING, "
+            "address STRING, "
+            "latitude DOUBLE, "
+            "longitude DOUBLE, "
+            "crs STRING, "
+            "PRIMARY KEY(name)"
+            ")"
+        ),
+    ),
 )
 
-INDEX_STATEMENTS: tuple[str, ...] = (
-    "CREATE INDEX affiliation_geo IF NOT EXISTS "
-    "FOR (n:Affiliation) ON (n.latitude, n.longitude)",
+REL_TABLE_STATEMENTS: tuple[tuple[str, str], ...] = (
+    (
+        "AFFILIATED_WITH",
+        "CREATE REL TABLE AFFILIATED_WITH(FROM Collaborator TO Affiliation)",
+    ),
+    (
+        "WORKS_IN",
+        "CREATE REL TABLE WORKS_IN(FROM Collaborator TO Sector)",
+    ),
+    (
+        "PRESENT_AT",
+        "CREATE REL TABLE PRESENT_AT(FROM Sector TO Affiliation)",
+    ),
 )
 
 
-def all_schema_statements() -> tuple[str, ...]:
-    """Return the full set of schema-creation Cypher statements."""
-    return CONSTRAINT_STATEMENTS + INDEX_STATEMENTS
+def all_schema_statements() -> tuple[tuple[str, str], ...]:
+    """Return ``(table_name, ddl)`` pairs for every node and rel table."""
+    return NODE_TABLE_STATEMENTS + REL_TABLE_STATEMENTS
